@@ -1,0 +1,21 @@
+{
+  "name": "Wave Racers",
+  "genre": "racing",
+  "dim": "3D",
+  "mode": "Versus",
+  "players": "2–8",
+  "hook": "Jet skis, big waves, buoys. Miss one: +2 seconds.",
+  "how": "Race jet skis three laps around the islands on a rolling sea. Steer between every pair of buoys, fly off the wave crests and keep your line; each missed gate adds 2 seconds to your time.",
+  "controls": "Arrow keys or A/D to steer, Down or Space to brake into tight turns, or on-screen buttons",
+  "uses": [
+    ["Leaderboard", "The fastest three-lap races, penalties included."],
+    ["Host-run rounds", "The host's browser starts each race and posts the results; if it leaves, the next player takes over."],
+    ["Bots", "Bots race the line, and now and then miss a gate, until enough people join."],
+    ["Live sync", "Every jet ski rides the same waves for everyone at once."]
+  ],
+  "ideas": [
+    "Make the waves bigger and add a storm",
+    "Add boost rings floating between the gates",
+    "Turn it into a night race with glowing buoys"
+  ]
+}

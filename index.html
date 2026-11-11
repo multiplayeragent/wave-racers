@@ -1,0 +1,748 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Wave Racers</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #5cc4f0; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; touch-action: none; }
+  .hud { position: fixed; pointer-events: none; text-shadow: 0 2px 4px #0009; font-weight: 800; }
+  #pos { top: max(12px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); font-size: 40px; line-height: 1; }
+  #pos small { font-size: 18px; opacity: .85; }
+  #lap { top: calc(max(12px, env(safe-area-inset-top)) + 46px); left: max(16px, env(safe-area-inset-left)); font-size: 16px; }
+  #lap b { color: #ffd23f; }
+  #time { top: max(12px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); text-align: right; font-size: 28px; line-height: 1; font-variant-numeric: tabular-nums; }
+  #time small { display: block; font-size: 14px; opacity: .85; margin-top: 4px; }
+  #net { bottom: max(10px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); font-size: 12px; font-weight: 600; opacity: .85; white-space: nowrap; }
+  #hint { bottom: calc(max(10px, env(safe-area-inset-bottom)) + 26px); left: 0; right: 0; text-align: center; font-size: 16px; padding: 0 16px; }
+  body.touch #net { bottom: calc(max(16px, env(safe-area-inset-bottom)) + 84px); }
+  body.touch #hint { bottom: calc(max(16px, env(safe-area-inset-bottom)) + 104px); }
+  #count { inset: 0; display: grid; place-items: center; font-size: min(26vw, 180px); color: #ffd23f; -webkit-text-stroke: 4px #0a4a7a; }
+  #msg { top: 26%; left: 0; right: 0; text-align: center; font-size: 30px; color: #ffd23f; transition: opacity .3s, transform .3s; opacity: 0; transform: scale(.85); padding: 0 16px; }
+  #msg.on { opacity: 1; transform: scale(1); }
+  #msg.bad { color: #ff6b5a; }
+  #over { position: fixed; inset: 0; display: grid; place-items: center; background: #04284a77; }
+  #over[hidden], .pad[hidden] { display: none; }
+  .card { box-sizing: border-box; width: min(380px, calc(100vw - 32px)); max-height: 86vh; overflow: auto; padding: 20px; border-radius: 16px; background: #0b3a5ef2; border: 1px solid #ffffff2a; }
+  .card h2 { margin: 0 0 8px; font-size: 22px; }
+  .card h3 { margin: 14px 0 4px; font-size: 14px; color: #ffd23f; }
+  .card ol { margin: 0; padding-left: 24px; font-size: 14px; }
+  .card li span { float: right; font-variant-numeric: tabular-nums; }
+  .card li em { font-style: normal; color: #ff9a8a; font-size: 12px; margin-left: 6px; }
+  .card li.me { color: #ffd23f; font-weight: 700; }
+  .card li.note { list-style: none; margin-left: -24px; opacity: .8; }
+  .card p { margin: 12px 0 0; font-size: 13px; opacity: .8; }
+  button.go { width: 100%; min-height: 48px; margin-top: 14px; border: 0; border-radius: 12px; background: linear-gradient(90deg, #3de0d0, #3da5ff); color: #062a45; font: 800 17px system-ui, sans-serif; cursor: pointer; }
+  .pad { position: fixed; bottom: max(16px, env(safe-area-inset-bottom)); display: flex; gap: 12px; }
+  .pad button { width: 76px; height: 76px; border-radius: 50%; border: 2px solid #ffffff88; background: #00000033; color: #fff; font: 800 15px system-ui, sans-serif; touch-action: none; }
+  .pad button.on { background: #ffffff55; }
+  #padL { left: max(16px, env(safe-area-inset-left)); } #padR { right: max(16px, env(safe-area-inset-right)); }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+<script type="importmap">{ "imports": { "three": "./libs/three.module.min.js" } }</script>
+</head>
+<body>
+<div class="hud" id="pos"></div>
+<div class="hud" id="lap"></div>
+<div class="hud" id="time"></div>
+<div class="hud" id="hint"></div>
+<div class="hud" id="net">Connecting…</div>
+<div class="hud" id="count"></div>
+<div class="hud" id="msg"></div>
+<div class="pad" id="padL" hidden><button data-k="left">◀</button><button data-k="right">▶</button></div>
+<div class="pad" id="padR" hidden><button data-k="brake">BRAKE</button></div>
+<div id="over" hidden><div class="card">
+  <h2 id="otitle">Results</h2><ol id="results"></ol>
+  <h3>Fastest races</h3><ol id="board"><li class="note">Loading…</li></ol>
+  <button class="go" id="again">Race again</button>
+  <p id="next"></p>
+</div></div>
+<script type="module">
+/* ═══ WAVE RACERS · a Multiplayer Agent starter ═══════════════════════════════════════
+ * Jet skis race three laps around tropical islands on a rolling ocean. Steer through every
+ * pair of buoys (miss one: +2 seconds), fly off the wave crests, and throw up spray.
+ * Versus, 2–8 players; bots fill empty seats.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ laps, speeds, handling, the waves, the course, gates, bots, timers
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host
+ *   WAVES ......... ONE wave function: the sea's height anywhere at any moment (same for everyone)
+ *   COURSE ........ the racing line, the buoy gates and the islands
+ *   WORLD ......... sky, the moving sea (drawn on the graphics card from the same waves), islands, buoys, spray
+ *   JET SKIS ...... the jet ski model, and ONE physics function that moves any ski on the waves
+ *   RACE (HOST) ... the race phases (grid, race, done) and the bots. Only the host writes these.
+ *   MY SKI ........ steering, gates, laps. Each player writes only its own.
+ *   HUD & RESULTS . place, laps, gates, countdown, results, leaderboard
+ *   INPUT ......... keyboard and touch
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code):
+ *   - The waves are a fixed function of position and the clock, so every client sees the
+ *     same sea without sending it. Each racer rides it with its own physics.
+ *   - Each player writes its OWN entity: `k` (one packed JSON field: race id, position,
+ *     height, heading, velocity, lap, progress, gates missed, finish time) about 15 times a
+ *     second, `hb` (heartbeat) once a second, and `n`/`c` (name, color) once.
+ *   - The HOST is the lowest sessionId among live players (heartbeat seen in the last 3s),
+ *     worked out every frame. Only the host writes the shared fields `race` (id, version
+ *     `v`, phase, start and end times, results) and `bots`. A new host adopts both.
+ *   - Each racer checks its own gates: miss one and its own time gets +2s, which it
+ *     publishes. A new race starts only when the host bumps race.id.
+ *   - Intent: "again" {} from the results card asks the host to start the next race now.
+ *   - ?attract plays offline with bots only (the preview video is recorded from it).
+ *   - Leaderboard "fastest-race": each player's best 3-lap time with penalties (stored as
+ *     600000 - ms, so higher is better), shown on the results card.
+ */
+import * as THREE from "three";
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  laps: 3,
+  seats: 6,               // bots fill the race up to this many skis
+  vmax: 32,               // top speed on flat water, units/s
+  accel: 22,              // throttle (skis throttle on their own; brake to slow)
+  brake: 30,
+  turn: 2.0,              // steering, radians/s
+  grip: 2.6,              // how fast a sideways slide dies away (lower = more drift)
+  drag: 0.12,             // water drag, share of speed per second
+  gravity: 24,            // units/s²
+  slopePush: 5,           // how much the waves' slopes push you downhill
+  gateWidth: 13,          // the gap between a gate's two buoys
+  missPenalty: 2000,      // ms added for each missed gate
+  gatesPerLap: 10,
+  laneWidth: 34,          // how wide the course is (it's open sea: this is just for the bots)
+  countdown: 5000,        // ms on the grid before GO
+  afterFirst: 25000,      // ms the race stays open after the first finisher
+  resultsFor: 12000,      // ms the results show before the next race
+  botSkill: [0.86, 0.97], // bots' top speed, as a share of vmax
+  botMiss: 0.07,          // chance a bot misses any one gate
+  board: "fastest-race",
+  // The waves: direction, wavelength, height and speed. Change them for a calmer or wilder sea.
+  waves: [{ dir: [0.8, 0.6], len: 44, amp: 1.7, speed: 7 }, { dir: [-0.5, 0.85], len: 28, amp: 0.8, speed: 5.5 }, { dir: [0.2, -1], len: 16, amp: 0.3, speed: 4 }],
+  // The racing line: points it passes through, in order (it loops back to the first).
+  course: [[0, 0], [80, -18], [160, 0], [200, 60], [175, 130], [105, 150], [45, 118], [-15, 150], [-90, 125], [-115, 55], [-75, 2]],
+};
+const BOT_NAMES = ["Splash", "Marlin", "Coral", "Wake", "Reef", "Tide", "Squall"];
+const COLORS = ["#ff4d4d", "#ffd23f", "#52d273", "#c77dff", "#ff8c42", "#ff6fb5", "#3de0d0", "#4d7dff"];
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'wave-racers',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const ATTRACT = new URLSearchParams(location.search).has("attract");
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true,
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const mp = await Promise.race([MP.join({ ...MP_CONNECT }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+const parse = (v, fb) => { if (typeof v !== "string") return fb; try { return JSON.parse(v); } catch { return fb; } };
+const memo = new Map();
+/** A shared JSON field, parsed once per change (read-only: never change what this returns). */
+function shared(key, fb) {
+  const raw = S.shared[key], m = memo.get(key);
+  if (m && m.raw === raw) return m.v;
+  const v = parse(raw, fb); memo.set(key, { raw, v }); return v;
+}
+let net = null, S = { entities: { players: {} }, shared: {} }, dropped = false;
+const seenHb = new Map();
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+let wakeHold = 0, lastFrameAt = 0; // a tab whose frames stopped (frozen, or in the background) doesn't act as host, nor for 700ms after it wakes (see frame())
+const isHost = () => livePlayers()[0] === net.sessionId && performance.now() >= wakeHold && !(lastFrameAt && performance.now() - lastFrameAt > 1000);
+
+// ── WAVES ───────────────────────────────────────────────────────────────────────────
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const angle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+const WAVES = CONFIG.waves.map((w) => { const l = Math.hypot(...w.dir); return { dx: w.dir[0] / l, dz: w.dir[1] / l, k: (Math.PI * 2) / w.len, amp: w.amp, speed: w.speed }; });
+const phase = new Float32Array(WAVES.length); // each wave's phase right now (kept small, so the graphics card stays precise)
+/** Move the waves to clock time t (seconds). Everyone uses the shared clock, so everyone's sea matches. */
+function setWaveTime(t) { WAVES.forEach((w, i) => { phase[i] = (w.k * w.speed * (t % 100000)) % (Math.PI * 2); }); }
+/** The sea's height at (x, z) right now. */
+function seaY(x, z) { let h = 0; for (let i = 0; i < WAVES.length; i++) { const w = WAVES[i]; h += w.amp * Math.sin(w.k * (w.dx * x + w.dz * z) - phase[i]); } return h; }
+/** The sea's slope at (x, z): [dh/dx, dh/dz]. */
+function seaSlope(x, z) { let gx = 0, gz = 0; for (let i = 0; i < WAVES.length; i++) { const w = WAVES[i], c = w.amp * w.k * Math.cos(w.k * (w.dx * x + w.dz * z) - phase[i]); gx += c * w.dx; gz += c * w.dz; } return [gx, gz]; }
+
+// ── COURSE ──────────────────────────────────────────────────────────────────────────
+function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const curve = new THREE.CatmullRomCurve3(CONFIG.course.map(([x, z]) => new THREE.Vector3(x, 0, z)), true, "catmullrom", 0.5);
+const N = 600, P = curve.getSpacedPoints(N).slice(0, N), TLEN = curve.getLength();
+const T = P.map((p, i) => P[(i + 1) % N].clone().sub(p).normalize());
+const L = T.map((t) => new THREE.Vector3(t.z, 0, -t.x)); // the left of the line at each point
+/** Nearest line point to (x, z), searching near `hint` first. */
+function nearest(x, z, hint) {
+  let best = 0, bd = Infinity;
+  const scan = (from, to) => { for (let j = from; j <= to; j++) { const k = ((j % N) + N) % N, d = (P[k].x - x) ** 2 + (P[k].z - z) ** 2; if (d < bd) { bd = d; best = k; } } };
+  if (hint >= 0) scan(hint - 25, hint + 25);
+  if (hint < 0 || bd > 40 * 40) scan(0, N - 1);
+  return { i: best, d: Math.sqrt(bd) };
+}
+// Gates: a pair of buoys across the line, swinging left and right of it like a slalom.
+const GATES = Array.from({ length: CONFIG.gatesPerLap }, (_, g) => {
+  const i = Math.floor(((g + 0.6) / (CONFIG.gatesPerLap + 0.2)) * N), off = (g % 2 ? -1 : 1) * 5;
+  return { i, off, x: P[i].x + L[i].x * off, z: P[i].z + L[i].z * off };
+});
+// Islands: a big one in the middle, smaller ones round the outside, all clear of the course.
+const ISLANDS = [];
+{
+  const rnd = mulberry32(17), clear = (x, z, r) => P.every((p) => Math.hypot(p.x - x, p.z - z) > r + CONFIG.laneWidth / 2 + 4) && ISLANDS.every((o) => Math.hypot(o.x - x, o.z - z) > o.r + r + 6);
+  for (const [x, z, r] of [[45, 65, 34], [140, 78, 20], [-50, 70, 18]]) if (clear(x, z, r)) ISLANDS.push({ x, z, r });
+  for (let n = 0; n < 400 && ISLANDS.length < 14; n++) { const x = -260 + rnd() * 560, z = -150 + rnd() * 420, r = 6 + rnd() * 16; if (clear(x, z, r)) ISLANDS.push({ x, z, r }); }
+}
+/** Grid slot `n` behind the start line: { x, z, h, i }. */
+function gridSlot(n) {
+  const back = (N - 6 - Math.floor(n / 3) * 12 + N) % N, side = ((n % 3) - 1) * 6;
+  const p = P[back].clone().addScaledVector(L[back], side);
+  return { x: p.x, z: p.z, h: Math.atan2(T[0].x, T[0].z), i: back };
+}
+
+// ── WORLD ───────────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog("#a8e2f7", 180, 520);
+const camera = new THREE.PerspectiveCamera(68, 1, 0.5, 1500);
+function fit() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+addEventListener("resize", fit); addEventListener("orientationchange", fit); fit();
+scene.add(new THREE.HemisphereLight("#ffffff", "#2a7aa0", 1.3));
+const sun = new THREE.DirectionalLight("#fff4d8", 1.8); sun.position.set(-80, 120, 60); scene.add(sun);
+function canvasTex(w, h, paint, repeat) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h; paint(c.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+// Sky: a bright tropical dome with a few flat clouds.
+const skyGeo = new THREE.SphereGeometry(1200, 32, 16), skyCol = [];
+const SKY = [[-1, "#a8e2f7"], [0, "#c8f0ff"], [0.25, "#5cc4f0"], [1, "#1f8ad6"]].map(([y, c]) => [y, new THREE.Color(c)]);
+for (let i = 0; i < skyGeo.attributes.position.count; i++) {
+  const y = skyGeo.attributes.position.getY(i) / 1200; let k = 1; while (k < SKY.length - 1 && SKY[k][0] < y) k++;
+  const [y0, c0] = SKY[k - 1], [y1, c1] = SKY[k], c = c0.clone().lerp(c1, clamp((y - y0) / (y1 - y0), 0, 1)); skyCol.push(c.r, c.g, c.b);
+}
+skyGeo.setAttribute("color", new THREE.Float32BufferAttribute(skyCol, 3));
+scene.add(new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false })));
+const puff = canvasTex(64, 64, (c) => { const g = c.createRadialGradient(32, 32, 0, 32, 32, 32); g.addColorStop(0, "#fff"); g.addColorStop(0.5, "#fffc"); g.addColorStop(1, "#fff0"); c.fillStyle = g; c.fillRect(0, 0, 64, 64); });
+{ const rnd = mulberry32(3); for (let i = 0; i < 18; i++) { const a = rnd() * Math.PI * 2, r = 600 + rnd() * 300, s = new THREE.Sprite(new THREE.SpriteMaterial({ map: puff, fog: false, depthWrite: false, opacity: 0.85 })); s.scale.set(160 + rnd() * 140, 40 + rnd() * 30, 1); s.position.set(Math.cos(a) * r, 90 + rnd() * 120, Math.sin(a) * r); scene.add(s); } }
+// The sea: a big grid moved by the same waves on the graphics card, with foam on the crests.
+const time = { value: 0 }, phases = { value: phase };
+const seaGeo = new THREE.PlaneGeometry(1100, 1100, 220, 220).rotateX(-Math.PI / 2).translate(40, 0, 70);
+const seaMat = new THREE.MeshStandardMaterial({ color: "#1b8fc4", roughness: 0.32, metalness: 0.1 });
+const WGL = WAVES.map((w) => `vec4(${w.dx.toFixed(4)}, ${w.dz.toFixed(4)}, ${w.k.toFixed(5)}, ${w.amp.toFixed(3)})`).join(", ");
+seaMat.onBeforeCompile = (sh) => {
+  sh.uniforms.uPhase = phases;
+  const head = `uniform float uPhase[${WAVES.length}];\nvarying float vH;\nconst vec4 W[${WAVES.length}] = vec4[${WAVES.length}](${WGL});\n`;
+  sh.vertexShader = head + sh.vertexShader
+    .replace("#include <beginnormal_vertex>", `float gx = 0.0, gz = 0.0, hh = 0.0;
+      for (int i = 0; i < ${WAVES.length}; i++) { float a = W[i].z * dot(W[i].xy, position.xz) - uPhase[i]; hh += W[i].w * sin(a); float c = W[i].w * W[i].z * cos(a); gx += c * W[i].x; gz += c * W[i].y; }
+      vec3 objectNormal = normalize(vec3(-gx, 1.0, -gz)); vH = hh;`)
+    .replace("#include <begin_vertex>", "vec3 transformed = vec3(position.x, hh, position.z);");
+  sh.fragmentShader = "varying float vH;\n" + sh.fragmentShader.replace("#include <color_fragment>", `#include <color_fragment>
+      diffuseColor.rgb = mix(diffuseColor.rgb * 0.75, diffuseColor.rgb * 1.15 + vec3(0.0, 0.05, 0.05), smoothstep(-2.0, 2.0, vH));
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.92, 0.98, 1.0), smoothstep(1.7, 2.6, vH) * 0.8);`);
+};
+const sea = new THREE.Mesh(seaGeo, seaMat); sea.frustumCulled = false; scene.add(sea);
+// Islands: sandy shores, green hills, palm trees.
+const sandMat = new THREE.MeshStandardMaterial({ color: "#f0d9a0", roughness: 1, flatShading: true }), hillMat = new THREE.MeshStandardMaterial({ color: "#4cae4a", roughness: 1, flatShading: true });
+const trunkMat = new THREE.MeshStandardMaterial({ color: "#8a5a34" }), leafMat = new THREE.MeshStandardMaterial({ color: "#2f9a3e", flatShading: true, side: THREE.DoubleSide });
+{
+  const rnd = mulberry32(23);
+  for (const isl of ISLANDS) {
+    const shore = new THREE.Mesh(new THREE.CylinderGeometry(isl.r, isl.r + 3, 4, 18), sandMat); shore.position.set(isl.x, -1.2, isl.z); scene.add(shore);
+    const hill = new THREE.Mesh(new THREE.ConeGeometry(isl.r * 0.8, isl.r * (0.5 + rnd() * 0.4), 9), hillMat); hill.position.set(isl.x, 0.8 + isl.r * 0.2, isl.z); hill.rotation.y = rnd() * 3; scene.add(hill);
+    for (let p = 0; p < Math.max(1, Math.floor(isl.r / 5)); p++) {
+      const a = rnd() * Math.PI * 2, d = isl.r * (0.75 + rnd() * 0.15), x = isl.x + Math.cos(a) * d, z = isl.z + Math.sin(a) * d, h = 6 + rnd() * 4;
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.45, h, 6), trunkMat); trunk.position.set(x, 0.8 + h / 2, z); trunk.rotation.z = (rnd() - 0.5) * 0.4; scene.add(trunk);
+      for (let l = 0; l < 5; l++) { const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.8, 4.5, 4).rotateX(Math.PI / 2).translate(0, 0, 2), leafMat); leaf.position.set(x, 0.8 + h, z); leaf.rotation.set(0.5, (l / 5) * Math.PI * 2, 0, "YXZ"); scene.add(leaf); }
+    }
+  }
+}
+// Buoys: red and white, bobbing on the waves. The next gate glows.
+const buoyTex = canvasTex(32, 64, (c) => { for (let i = 0; i < 4; i++) { c.fillStyle = i % 2 ? "#ffffff" : "#ff3b2f"; c.fillRect(0, i * 16, 32, 16); } });
+const buoyGeo = new THREE.CylinderGeometry(0.9, 1.2, 3.2, 12), buoyCap = new THREE.SphereGeometry(0.55, 10, 8);
+const buoyMat = new THREE.MeshStandardMaterial({ map: buoyTex, roughness: 0.5 }), capMat = new THREE.MeshStandardMaterial({ color: "#ffd23f", emissive: "#ffd23f", emissiveIntensity: 0.4 });
+const buoys = [];
+for (const g of GATES) for (const s of [-1, 1]) {
+  const m = new THREE.Group(), body = new THREE.Mesh(buoyGeo, buoyMat), cap = new THREE.Mesh(buoyCap, capMat.clone()); body.position.y = 1; cap.position.y = 2.9; m.add(body, cap);
+  const x = g.x + L[g.i].x * s * (CONFIG.gateWidth / 2), z = g.z + L[g.i].z * s * (CONFIG.gateWidth / 2);
+  m.position.set(x, 0, z); scene.add(m); buoys.push({ m, cap, g, x, z });
+}
+const arrow = new THREE.Mesh(new THREE.ConeGeometry(1.4, 2.6, 4).rotateX(Math.PI), new THREE.MeshBasicMaterial({ color: "#ffd23f" })); scene.add(arrow); // over the next gate
+// The start/finish: a floating checkered banner on two posts.
+const checker = canvasTex(64, 16, (c) => { for (let x = 0; x < 16; x++) for (let y = 0; y < 4; y++) { c.fillStyle = (x + y) % 2 ? "#111" : "#fff"; c.fillRect(x * 4, y * 4, 4, 4); } });
+{
+  const w = CONFIG.laneWidth, banner = new THREE.Mesh(new THREE.BoxGeometry(w, 2, 0.4), new THREE.MeshBasicMaterial({ map: checker }));
+  banner.position.copy(P[0]).setY(9); banner.rotation.y = Math.atan2(T[0].x, T[0].z); scene.add(banner);
+  for (const s of [-1, 1]) { const post = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 11, 8), new THREE.MeshStandardMaterial({ color: "#eee" })); post.position.copy(P[0]).addScaledVector(L[0], (s * w) / 2).setY(4.5); scene.add(post); }
+}
+// Spray: a pool of white dots (wakes, turns, splashes).
+const PN = 1400, pPos = new Float32Array(PN * 3), pCol = new Float32Array(PN * 4), parts = Array.from({ length: PN }, () => ({ life: 0, max: 1, x: 0, y: -99, z: 0, vx: 0, vy: 0, vz: 0 }));
+const pGeo = new THREE.BufferGeometry(); pGeo.setAttribute("position", new THREE.BufferAttribute(pPos, 3)); pGeo.setAttribute("color", new THREE.BufferAttribute(pCol, 4));
+const spray = new THREE.Points(pGeo, new THREE.PointsMaterial({ size: 0.8, map: puff, vertexColors: true, transparent: true, depthWrite: false }));
+spray.frustumCulled = false; scene.add(spray);
+spray.material.onBeforeCompile = (sh) => { sh.vertexShader = sh.vertexShader.replace("#include <fog_vertex>", "#include <fog_vertex>\n  gl_PointSize = min(gl_PointSize, 36.0);"); }; // drops right by the camera stay small
+let nextPart = 0;
+function emit(x, y, z, vx, vy, vz, n, spread, life) {
+  for (let k = 0; k < n; k++) { const q = parts[nextPart]; nextPart = (nextPart + 1) % PN; Object.assign(q, { life, max: life, x, y, z, vx: vx + (Math.random() - 0.5) * spread, vy: vy + Math.random() * spread * 0.6, vz: vz + (Math.random() - 0.5) * spread }); }
+}
+function tickParts(dt) {
+  for (let i = 0; i < PN; i++) {
+    const q = parts[i];
+    if (q.life > 0) { q.life -= dt; q.vy -= CONFIG.gravity * 0.7 * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.z += q.vz * dt; q.vx *= 1 - dt; q.vz *= 1 - dt; }
+    pPos[i * 3] = q.x; pPos[i * 3 + 1] = q.life > 0 ? q.y : -99; pPos[i * 3 + 2] = q.z;
+    pCol[i * 4] = pCol[i * 4 + 1] = pCol[i * 4 + 2] = 1; pCol[i * 4 + 3] = Math.max(0, q.life / q.max) * 0.85;
+  }
+  pGeo.attributes.position.needsUpdate = pGeo.attributes.color.needsUpdate = true;
+}
+// Sound: tiny WebAudio blips, started by the first key or touch.
+let actx = null;
+function beep(freq, dur, type = "sine", vol = 0.1) {
+  if (!actx) return;
+  const o = actx.createOscillator(), g = actx.createGain(); o.type = type; o.frequency.value = freq;
+  g.gain.setValueAtTime(vol, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + dur);
+  o.connect(g).connect(actx.destination); o.start(); o.stop(actx.currentTime + dur);
+}
+
+// ── JET SKIS ────────────────────────────────────────────────────────────────────────
+const hullShape = new THREE.Shape([[0, 2.1], [0.75, 1.0], [0.85, -1.4], [0.6, -1.7], [-0.6, -1.7], [-0.85, -1.4], [-0.75, 1.0]].map(([x, y]) => new THREE.Vector2(x, y)));
+const hullGeo = new THREE.ExtrudeGeometry(hullShape, { depth: 0.55, bevelEnabled: true, bevelSize: 0.12, bevelThickness: 0.12, bevelSegments: 1 }).rotateX(Math.PI / 2).translate(0, 0.65, 0);
+const white = new THREE.MeshStandardMaterial({ color: "#f4f4f4", roughness: 0.4 }), dark = new THREE.MeshStandardMaterial({ color: "#23262e", roughness: 0.6 });
+const skin = new THREE.MeshStandardMaterial({ color: "#f0c8a0" });
+function nameTag(name) {
+  const tex = canvasTex(256, 64, (c) => { c.font = "bold 34px system-ui"; c.textAlign = "center"; c.lineWidth = 6; c.strokeStyle = "#000a"; c.strokeText(name, 128, 44); c.fillStyle = "#fff"; c.fillText(name, 128, 44); });
+  const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false })); tag.scale.set(5, 1.25, 1); tag.position.y = 4.2; return tag;
+}
+function makeSki(color, name) {
+  const g = new THREE.Group(), body = new THREE.Group(); g.add(body);
+  const paint = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.1 });
+  body.add(new THREE.Mesh(hullGeo, white));
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.35, 2.2), paint); deck.position.set(0, 0.95, 0.3); body.add(deck);
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.3, 1.3), dark); seat.position.set(0, 1.2, -0.6); body.add(seat);
+  const bars = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.1, 0.1), dark); bars.position.set(0, 1.65, 0.75); body.add(bars);
+  const rider = new THREE.Group(); rider.position.set(0, 1.3, -0.4); body.add(rider);
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.35, 0.7, 4, 8), paint); torso.position.set(0, 0.75, 0.25); torso.rotation.x = 0.5; rider.add(torso);
+  const vest = new THREE.Mesh(new THREE.CapsuleGeometry(0.38, 0.4, 4, 8), new THREE.MeshStandardMaterial({ color: "#ff8c1a" })); vest.position.set(0, 0.8, 0.28); vest.rotation.x = 0.5; rider.add(vest);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 10), skin); head.position.set(0, 1.45, 0.62); rider.add(head);
+  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.34, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), paint); helmet.position.copy(head.position); rider.add(helmet);
+  for (const s of [-1, 1]) { const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.12, 0.6, 4, 6), skin); arm.position.set(s * 0.45, 1.0, 0.75); arm.rotation.x = 1.1; rider.add(arm); }
+  if (name) g.add(nameTag(name));
+  g.userData = { body, rider };
+  scene.add(g); return g;
+}
+/** Draw a ski: position, heading, pitch (nose up +), roll (lean into the turn). */
+function placeSki(g, x, y, z, h, pitch, roll) {
+  g.position.set(x, y, z); g.rotation.set(0, h, 0);
+  g.userData.body.rotation.set(-pitch, 0, roll, "YXZ");
+}
+
+/** The one physics function, used for every ski: c = { x, y, z, h, vx, vy, vz, air, pitch },
+ *  ctl = { steer -1..1 (left +), gas 0..1, brake 0..1 }. Returns how hard it landed (0 if not). */
+function stepSki(c, ctl, dt) {
+  const onWater = !c.air;
+  let fx = Math.sin(c.h), fz = Math.cos(c.h);
+  let vf = c.vx * fx + c.vz * fz, vs = c.vx * fz - c.vz * fx;
+  const top = CONFIG.vmax * (c.top || 1);
+  if (onWater) {
+    if (ctl.gas > 0 && vf < top) vf += CONFIG.accel * ctl.gas * dt;
+    if (ctl.brake > 0) vf -= CONFIG.brake * ctl.brake * dt;
+    vf = Math.max(vf, -6);
+    c.h = angle(c.h + ctl.steer * CONFIG.turn * (ctl.brake ? 1.4 : 1) * dt * clamp(vf / 8, -1, 1));
+    vf -= vf * CONFIG.drag * dt;
+    vs *= Math.exp(-CONFIG.grip * dt);
+  } else c.h = angle(c.h + ctl.steer * CONFIG.turn * 0.35 * dt);
+  fx = Math.sin(c.h); fz = Math.cos(c.h);
+  c.vx = fx * vf + fz * vs; c.vz = fz * vf - fx * vs;
+  if (onWater) { const [gx, gz] = seaSlope(c.x, c.z); c.vx -= gx * CONFIG.slopePush * dt; c.vz -= gz * CONFIG.slopePush * dt; }
+  c.x += c.vx * dt; c.z += c.vz * dt;
+  // islands: bounce off the shore
+  for (const isl of ISLANDS) {
+    const dx = c.x - isl.x, dz = c.z - isl.z, d = Math.hypot(dx, dz), r = isl.r + 2;
+    if (d < r) { const nx = dx / d, nz = dz / d, vr = c.vx * nx + c.vz * nz; c.x = isl.x + nx * r; c.z = isl.z + nz * r; if (vr < 0) { c.vx -= 1.5 * vr * nx; c.vz -= 1.5 * vr * nz; c.bonk = -vr; } }
+  }
+  // up and down: ride the surface, or fly off it when it drops away faster than gravity
+  const surf = seaY(c.x, c.z);
+  let landed = 0;
+  if (onWater) {
+    const follow = (surf - c.y) / Math.max(dt, 1e-4);
+    if (follow < c.vy - CONFIG.gravity * dt * 1.15 && Math.hypot(c.vx, c.vz) > 12) { c.air = true; c.vy -= CONFIG.gravity * dt; c.y += c.vy * dt; }
+    else { c.vy = clamp(follow, -30, 14); c.y = surf; }
+  } else {
+    c.vy -= CONFIG.gravity * dt; c.y += c.vy * dt;
+    if (c.y <= surf) { landed = Math.max(0.1, -c.vy); c.air = false; c.y = surf; c.vy = 0; }
+  }
+  // the nose follows the waves on the water, and the flight path in the air
+  const [gx, gz] = seaSlope(c.x, c.z), wantPitch = c.air ? clamp(Math.atan2(c.vy, Math.max(8, Math.hypot(c.vx, c.vz))), -0.5, 0.6) : Math.atan(gx * fx + gz * fz);
+  c.pitch = (c.pitch || 0) + (wantPitch - (c.pitch || 0)) * Math.min(1, dt * (c.air ? 3 : 8));
+  c.speed = vf; c.steer = ctl.steer;
+  return landed;
+}
+
+// ── RACE (HOST) ─────────────────────────────────────────────────────────────────────
+const host = { bots: new Map(), wasHost: false, lastBots: 0, raceId: 0, last: null };
+/** The race as state has it, or the host's own newer write that hasn't come back yet. `v` only goes up. */
+function race() {
+  const r = shared("race", null);
+  return host.last && isHost() && (!r || host.last.v > r.v) ? host.last : r;
+}
+function writeRace(r) { r = { ...r, v: (race()?.v ?? 0) + 1 }; host.last = r; net.setShared("race", JSON.stringify(r)); return r; }
+const newRace = (id) => writeRace({ id, phase: "grid", startAt: Date.now() + CONFIG.countdown, endsAt: 0, results: [] });
+
+/** How far round the race someone is: laps + share of a lap (negative while still behind the line on the grid). */
+const progress = (x) => x.lap + x.t - (x.t > 0.5 && !x.half ? 1 : 0);
+/** Everyone in the race, leader first: finishers by time (penalties in), then by progress. */
+function racers() {
+  const out = [], r = race(), live = new Set(livePlayers());
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    if (!live.has(id)) continue;
+    if (id === net.sessionId) { if (!ATTRACT) out.push({ id, name: "You", lap: me.lap, t: me.i / N, half: me.half, ft: me.ft, pen: me.pen, mine: true }); continue; }
+    const k = parse(p.k, null); if (k && r && k.r === r.id) out.push({ id, name: p.n || "Player", lap: k.l, t: k.t / N, half: !!k.hf, ft: k.ft, pen: k.pen || 0 });
+  }
+  for (const b of botList()) out.push({ id: b.i, name: b.n, lap: b.l, t: b.t / N, half: !!b.hf, ft: b.ft, pen: b.pen || 0, bot: true });
+  if (ATTRACT) out.push({ id: net.sessionId, name: myName, lap: me.lap, t: me.i / N, half: me.half, ft: me.ft, pen: me.pen, mine: true });
+  return out.sort((a, b) => (a.ft && b.ft ? a.ft - b.ft : a.ft ? -1 : b.ft ? 1 : progress(b) - progress(a)));
+}
+/** The bots as published: the host's live copy, or the last list it wrote. */
+function botList() {
+  if (isHost()) return [...host.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.color, x: b.x, y: b.y, z: b.z, h: b.h, vx: b.vx, vy: b.vy, vz: b.vz, a: b.air ? 1 : 0, l: b.lap, t: b.i, hf: b.half ? 1 : 0, ft: b.ft, pen: b.pen, gi: b.gi, s: b.steer || 0, sk: b.top }));
+  return shared("bots", []);
+}
+/** A bot's plan: where in each gate it aims (and the few gates it will miss). */
+const botPlan = (skill) => GATES.map(() => (Math.random() < CONFIG.botMiss * (1.5 - skill) ? (Math.random() < 0.5 ? -1 : 1) * (CONFIG.gateWidth / 2 + 3) : (Math.random() - 0.5) * CONFIG.gateWidth * 0.4));
+function newRacer(slot) { return { x: slot.x, y: 0, z: slot.z, h: slot.h, vx: 0, vy: 0, vz: 0, air: false, pitch: 0, i: slot.i, lap: 0, half: false, ft: 0, pen: 0, gi: 0 }; }
+function spawnBots(humans) {
+  const want = Math.max(0, CONFIG.seats - humans.length);
+  const keep = [...host.bots.values()].slice(0, want);
+  host.bots.clear(); keep.forEach((b) => host.bots.set(b.id, b));
+  while (host.bots.size < want) {
+    const used = new Set([...host.bots.values()].map((b) => b.name)), name = BOT_NAMES.find((n) => !used.has(n)) || "Bot";
+    const taken = new Set([...Object.values(S.entities.players || {}).map((p) => p.c), myColor, ...[...host.bots.values()].map((b) => b.color)]);
+    const [lo, hi] = CONFIG.botSkill, id = "b" + Math.random().toString(36).slice(2, 6);
+    host.bots.set(id, { id, name, color: COLORS.find((c) => !taken.has(c)) || "#cccccc", top: lo + Math.random() * (hi - lo) });
+  }
+  let n = humans.length;
+  for (const b of host.bots.values()) Object.assign(b, newRacer(gridSlot(n++)), { plan: botPlan(b.top), wob: Math.random() * 9 });
+}
+function adoptBots() {
+  host.bots.clear();
+  for (const b of shared("bots", [])) host.bots.set(b.i, Object.assign(newRacer({ x: b.x, z: b.z, h: b.h, i: b.t }), { id: b.i, name: b.n, color: b.c, top: b.sk || 0.9, y: b.y, vx: b.vx || 0, vy: b.vy || 0, vz: b.vz || 0, air: !!b.a, lap: b.l, half: !!b.hf, ft: b.ft || 0, pen: b.pen || 0, gi: b.gi || 0, plan: botPlan(b.sk || 0.9), wob: Math.random() * 9 }));
+}
+
+function hostTick(dt, now) {
+  if (!host.wasHost) { host.wasHost = true; adoptBots(); } // adopt the bots exactly as state has them
+  let r = race();
+  const humans = livePlayers().filter((id) => !(ATTRACT && id === net.sessionId));
+  if (!r) r = newRace(1);
+  if (host.raceId !== r.id) { host.raceId = r.id; if (r.phase === "grid") spawnBots(humans); }
+  else if (r.phase === "grid" && host.bots.size !== Math.max(0, CONFIG.seats - humans.length)) spawnBots(humans); // someone joined or left before GO
+  const t = Date.now();
+  if (r.phase === "grid" && t >= r.startAt) r = writeRace({ ...r, phase: "race" });
+  if (r.phase === "race") {
+    const all = racers(), done = all.filter((x) => x.ft);
+    const humansDone = all.filter((x) => !x.bot && (!ATTRACT || !x.mine)).every((x) => x.ft);
+    if (done.length && !r.endsAt) r = writeRace({ ...r, endsAt: t + CONFIG.afterFirst });
+    if ((done.length && humansDone && humans.length) || (r.endsAt && t > r.endsAt) || t - r.startAt > 300000 || (ATTRACT && done.length >= 3)) {
+      r = writeRace({ ...r, phase: "done", endsAt: t + CONFIG.resultsFor, results: all.map((x) => ({ id: x.id, n: x.mine ? myName : x.name, ft: x.ft || 0, pen: x.pen || 0 })) });
+    }
+  }
+  if (r.phase === "done" && t > r.endsAt) r = newRace(r.id + 1);
+  for (const b of host.bots.values()) {
+    const racing = r.phase === "race" && !b.ft;
+    stepSki(b, racing ? botSteer(b, now) : { steer: 0, gas: 0, brake: 1 }, dt);
+    if (racing) laps(b, r, () => {});
+  }
+  separateBots();
+  if (now - host.lastBots > 100) {
+    host.lastBots = now;
+    net.setShared("bots", JSON.stringify(botList().map((b) => ({ ...b, x: +b.x.toFixed(2), y: +b.y.toFixed(2), z: +b.z.toFixed(2), h: +b.h.toFixed(2), vx: +b.vx.toFixed(1), vy: +b.vy.toFixed(1), vz: +b.vz.toFixed(1), s: +b.s.toFixed(1), sk: +b.sk.toFixed(3) }))));
+  }
+}
+/** A bot (or the ?attract autopilot) aims for its spot in the next gate, then the one after. */
+function botSteer(b, now) {
+  const g = GATES[b.gi % GATES.length], aim = b.plan ? b.plan[b.gi % GATES.length] : 0;
+  let tx = g.x + L[g.i].x * aim, tz = g.z + L[g.i].z * aim;
+  const ahead = (g.i - b.i + N) % N;
+  if (ahead < 6 || ahead > N - 30) { const g2 = GATES[(b.gi + 1) % GATES.length]; tx = g2.x; tz = g2.z; } // about to pass: look on to the next
+  if (ahead > 90 && ahead < N - 30) { const p = P[(b.i + 40) % N]; tx = p.x; tz = p.z; } // a long way to the gate: follow the line
+  const want = Math.atan2(tx - b.x, tz - b.z), err = angle(want - b.h + Math.sin(now / 1100 + (b.wob || 0)) * 0.05);
+  return { steer: clamp(err * 2.4, -1, 1), gas: 1, brake: Math.abs(err) > 0.9 ? 0.6 : 0 };
+}
+/** Bots slide sideways out of each other and out of players' skis. */
+function separateBots() {
+  const bots = [...host.bots.values()], others = [me, ...[...views.entries()].filter(([id]) => !host.bots.has(id)).map(([, v]) => v)];
+  for (let i = 0; i < bots.length; i++) {
+    const b = bots[i];
+    for (const o of [...bots.slice(i + 1), ...others]) {
+      const dx = b.x - o.x, dz = b.z - o.z, d = Math.hypot(dx, dz);
+      if (d > 3.2 || d < 0.01) continue;
+      const push = (3.2 - d) * 0.5; b.x += (dx / d) * push; b.z += (dz / d) * push;
+      if (host.bots.has(o.id)) { o.x -= (dx / d) * push; o.z -= (dz / d) * push; }
+    }
+  }
+}
+/** Progress round the line, gates passed or missed, laps and the finish, for racer c (a bot or me). */
+function laps(c, r, onGate) {
+  const prev = c.i, n = nearest(c.x, c.z, c.i); c.i = n.i;
+  if (c.i > N * 0.45 && c.i < N * 0.6) c.half = true;
+  // the next gate: did I just go past its line? inside the buoys or not?
+  const g = GATES[c.gi % GATES.length], crossed = prev < g.i && c.i >= g.i && c.i - prev < N / 2;
+  if (crossed) {
+    const u = (c.x - P[g.i].x) * L[g.i].x + (c.z - P[g.i].z) * L[g.i].z, ok = Math.abs(u - g.off) <= CONFIG.gateWidth / 2;
+    if (!ok) c.pen += CONFIG.missPenalty;
+    onGate(ok, c.gi % GATES.length);
+    c.gi++;
+  }
+  if (prev > N * 0.9 && c.i < N * 0.1 && c.half) {
+    c.half = false; c.lap++;
+    while (c.gi < c.lap * GATES.length) { c.gi++; c.pen += CONFIG.missPenalty; onGate(false, -1); } // skipped gates count as missed
+    if (c.lap >= CONFIG.laps && !c.ft) c.ft = Date.now() - r.startAt + c.pen;
+    return true;
+  }
+  if (prev < N * 0.1 && c.i > N * 0.9) c.half = false; // backwards over the line
+  return false;
+}
+
+// ── MY SKI ──────────────────────────────────────────────────────────────────────────
+const myName = (() => { try { return localStorage.getItem("mpa-name") || ""; } catch { return ""; } })() ||
+  ["Ace", "Blaze", "Comet", "Flash", "Jet", "Spark"][Math.floor(Math.random() * 6)] + " " + (10 + Math.floor(Math.random() * 90));
+let myColor = COLORS[0]; // picked on join: the first color nobody in the room has
+/** Two people joined at once in one color (or a bot has mine): the one with the higher sessionId picks a free one. */
+function fixColor() {
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId), botColors = botList().map((b) => b.c);
+  if (!others.some(([id, p]) => p.c === myColor && id < net.sessionId) && !botColors.includes(myColor)) return;
+  const taken = new Set([...others.map(([, p]) => p.c), ...botColors]), free = COLORS.find((c) => !taken.has(c));
+  if (free) { myColor = free; net.me.set("c", free); if (me.g) { scene.remove(me.g); me.g = null; } }
+}
+const me = Object.assign(newRacer(gridSlot(0)), { g: null, raceId: -1, lapStart: 0, best: 0, lastSend: 0, submitted: -1, shake: 0, gateFx: [] });
+const input = { left: false, right: false, brake: false };
+
+function resetToGrid(r) {
+  me.raceId = r.id;
+  const slot = ATTRACT ? gridSlot(CONFIG.seats) : r.phase === "grid" ? gridSlot(Math.max(0, livePlayers().indexOf(net.sessionId))) : gridSlot(0);
+  Object.assign(me, newRacer(slot), { lapStart: r.phase === "grid" ? r.startAt : Date.now() });
+  if (ATTRACT) me.plan = GATES.map(() => 0);
+  for (const b of buoys) b.cap.material.color.set("#ffd23f");
+  $("over").hidden = true;
+}
+function myTick(dt, r, now) {
+  if (me.raceId !== r.id) resetToGrid(r);
+  const racing = r.phase === "race" && !me.ft;
+  const steer = (input.left ? 1 : 0) - (input.right ? 1 : 0);
+  const ctl = !racing ? { steer: 0, gas: 0, brake: 1 } : ATTRACT ? botSteer(me, now) : { steer, gas: 1, brake: input.brake ? 1 : 0 };
+  const wasAir = me.air, landed = stepSki(me, ctl, dt);
+  if (landed > 6) { splash(me, landed); me.shake = Math.min(1, landed / 14); beep(140, 0.25, "sawtooth", 0.06); }
+  if (!wasAir && me.air && racing && Math.hypot(me.vx, me.vz) > 20) toast("AIR!", 600);
+  if (me.bonk > 4) { me.shake = 0.6; beep(90, 0.2, "square", 0.08); toast("Ouch, rocks!", 800, true); } me.bonk = 0;
+  if (racing) {
+    const lapDone = laps(me, r, (ok, gi) => {
+      if (gi >= 0) { const bs = buoys.filter((b) => b.g === GATES[gi]); bs.forEach((b) => b.cap.material.color.set(ok ? "#52d273" : "#ff4d4d")); }
+      if (ok) beep(880, 0.12); else { beep(160, 0.3, "square", 0.08); toast(`Missed a gate! +${CONFIG.missPenalty / 1000}s`, 1200, true); }
+    });
+    if (lapDone) {
+      const lapMs = Date.now() - me.lapStart; me.lapStart = Date.now();
+      for (const b of buoys) b.cap.material.color.set("#ffd23f");
+      if (me.ft) { if (!me.best || me.ft < me.best) me.best = me.ft; toast(`Finished ${ord(racers().findIndex((x) => x.mine) + 1)}!`, 2500); beep(660, 0.15); setTimeout(() => beep(880, 0.15), 140); setTimeout(() => beep(1320, 0.35), 280); }
+      else toast(me.lap === CONFIG.laps - 1 ? "Final lap!" : `Lap ${me.lap + 1}`, 1300);
+    }
+  }
+  if (now - me.lastSend > 66) {
+    me.lastSend = now;
+    net.me.set("k", JSON.stringify({ r: me.raceId, x: +me.x.toFixed(2), y: +me.y.toFixed(2), z: +me.z.toFixed(2), h: +me.h.toFixed(2), vx: +me.vx.toFixed(1), vy: +me.vy.toFixed(1), vz: +me.vz.toFixed(1), a: me.air ? 1 : 0, l: me.lap, t: me.i, hf: me.half ? 1 : 0, ft: me.ft, pen: me.pen, s: +(me.steer || 0).toFixed(1) }));
+  }
+}
+function splash(c, power) {
+  emit(c.x, c.y + 0.3, c.z, 0, 4, 0, Math.min(60, 10 + power * 3), 10, 0.9);
+}
+
+// ── HUD & RESULTS ───────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const ord = (n) => n + (n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th");
+const fmt = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}.${String(Math.floor((ms % 1000) / 10)).padStart(2, "0")}`;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+let toastTimer = 0;
+function toast(text, ms = 1500, bad) { if (ATTRACT) return; const m = $("msg"); m.textContent = text; m.classList.add("on"); m.classList.toggle("bad", !!bad); clearTimeout(toastTimer); toastTimer = setTimeout(() => m.classList.remove("on"), ms); }
+let board = null, boardFor = -1, lastCount = "", started = 0;
+function hud(r, now) {
+  const t = Date.now();
+  const count = r.phase === "grid" && r.startAt - t < 3000 ? String(Math.max(1, Math.ceil((r.startAt - t) / 1000))) : r.phase === "race" && t - r.startAt < 900 ? "GO!" : "";
+  if (count !== lastCount) { lastCount = count; if (count === "GO!") beep(880, 0.4, "square", 0.08); else if (count) beep(440, 0.15, "square", 0.08); }
+  $("count").textContent = count;
+  if (ATTRACT) { for (const id of ["pos", "lap", "time", "net", "hint"]) $(id).textContent = ""; return; }
+  const order = racers(), at = order.findIndex((x) => x.mine) + 1, missed = me.pen / CONFIG.missPenalty;
+  $("pos").innerHTML = at ? `${ord(at)} <small>/ ${order.length}</small>` : "";
+  $("lap").innerHTML = me.ft ? "Finished" : `Lap ${clamp(me.lap + 1, 1, CONFIG.laps)}/${CONFIG.laps} · gate ${(me.gi % GATES.length) + 1}/${GATES.length}${missed ? ` · <b>${missed} missed</b>` : ""}`;
+  const raw = r.phase === "race" ? (me.ft || t - r.startAt) : 0;
+  $("time").innerHTML = `${fmt(me.ft || raw + me.pen)}${me.pen ? `<small>+${me.pen / 1000}s penalties</small>` : ""}`;
+  $("hint").textContent = r.phase === "grid" && r.startAt - t >= 3000 ? "Next race starting…" : me.ft && r.phase === "race" ? "Waiting for the others…" :
+    now - started < 14000 ? (touchUI ? "◀ ▶ steer through the buoys · BRAKE to turn tight · you throttle on your own" : "←/→ steer through the buoys · ↓ or Space to brake and turn tight · you throttle on your own") : "";
+  const n = livePlayers().length;
+  $("net").textContent = net.offline ? "Offline: playing with bots" : dropped ? "Reconnecting…" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the race" : ""}`;
+  $("over").hidden = r.phase !== "done";
+  if (r.phase === "done") {
+    const win = r.results[0];
+    $("otitle").textContent = win && win.ft ? (win.id === net.sessionId ? "You win!" : `${win.n} wins!`) : "Results";
+    $("results").innerHTML = r.results.map((x) => `<li class="${x.id === net.sessionId ? "me" : ""}">${esc(x.n)}${x.pen ? `<em>+${x.pen / 1000}s</em>` : ""}<span>${x.ft ? fmt(x.ft) : "DNF"}</span></li>`).join("");
+    $("next").textContent = `Next race in ${Math.max(0, Math.ceil((r.endsAt - t) / 1000))}s`;
+    if (boardFor !== r.id) { boardFor = r.id; showBoard(r); }
+  }
+}
+function showBoard(r) {
+  const list = $("board");
+  if (!board) { list.innerHTML = "<li class=\"note\">Leaderboards need a connection.</li>"; return; }
+  const mine = r.results.find((x) => x.id === net.sessionId);
+  const submit = mine && mine.ft && me.submitted !== r.id ? board.submit(Math.max(0, 600000 - mine.ft)).catch(() => null) : Promise.resolve();
+  me.submitted = r.id;
+  submit.then(() => board.top(10)).then(({ entries }) => {
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${fmt(600000 - e.score)}</span></li>`).join("") : "<li class=\"note\">No times yet. Set the first.</li>";
+  }).catch(() => { list.innerHTML = "<li class=\"note\">Couldn't load the leaderboard.</li>"; });
+}
+function again() { const r = race(); if (r && r.phase === "done" && isHost()) newRace(r.id + 1); }
+$("again").onclick = () => { if (isHost()) again(); else net.send("again", {}); };
+
+// ── INPUT ───────────────────────────────────────────────────────────────────────────
+const touchUI = matchMedia("(pointer: coarse)").matches && !ATTRACT;
+$("padL").hidden = $("padR").hidden = !touchUI;
+document.body.classList.toggle("touch", touchUI);
+const wakeAudio = () => { if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} } };
+const KEYS = { ArrowLeft: "left", a: "left", A: "left", ArrowRight: "right", d: "right", D: "right", ArrowDown: "brake", s: "brake", S: "brake", " ": "brake" };
+addEventListener("keydown", (e) => { wakeAudio(); const k = KEYS[e.key]; if (k) { e.preventDefault(); input[k] = true; } });
+addEventListener("keyup", (e) => { const k = KEYS[e.key]; if (k) input[k] = false; });
+for (const b of document.querySelectorAll(".pad button")) {
+  const k = b.dataset.k, on = (v) => { input[k] = v; b.classList.toggle("on", v); };
+  b.addEventListener("pointerdown", (e) => { e.preventDefault(); wakeAudio(); b.setPointerCapture(e.pointerId); on(true); });
+  for (const ev of ["pointerup", "pointercancel"]) b.addEventListener(ev, () => on(false));
+}
+renderer.domElement.addEventListener("pointerdown", wakeAudio);
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
+const views = new Map(); // id -> drawn ski for everyone but me: { g, x, y, z, h, ... }
+function viewOf(id, color, name) {
+  let v = views.get(id);
+  if (v && v.color !== color) { scene.remove(v.g); views.delete(id); v = null; } // they changed color
+  if (!v) { v = { id, g: makeSki(color, ATTRACT ? "" : name), color, x: 0, y: 0, z: 0, h: 0, vx: 0, vz: 0, pitch: 0, raw: "", fresh: true, air: false }; views.set(id, v); }
+  return v;
+}
+/** Ease a drawn ski toward where it said it was, plus how far it has gone since. */
+function follow(v, k, dt, now, exact) {
+  if (exact) { Object.assign(v, { x: k.x, y: k.y, z: k.z, h: k.h, vx: k.vx, vz: k.vz }); } else {
+    const key = `${k.x},${k.z},${k.h}`;
+    if (v.raw !== key) Object.assign(v, { raw: key, sx: k.x, sy: k.y, sz: k.z, sh: k.h, vx: k.vx || 0, vy: k.vy || 0, vz: k.vz || 0, at: now });
+    const age = Math.min(0.25, (now - v.at) / 1000), tx = v.sx + v.vx * age, tz = v.sz + v.vz * age;
+    if (v.fresh || Math.hypot(tx - v.x, tz - v.z) > 15) Object.assign(v, { x: tx, z: tz, h: v.sh, fresh: false });
+    const e = 1 - Math.pow(0.001, dt);
+    v.x += (tx - v.x) * e; v.z += (tz - v.z) * e; v.h = angle(v.h + angle(v.sh - v.h) * e);
+    // height: on the water, sit on our own sea; in the air, follow the arc it sent
+    const ty = k.a ? v.sy + v.vy * age - 0.5 * CONFIG.gravity * age * age : seaY(v.x, v.z);
+    v.y += (Math.max(ty, seaY(v.x, v.z)) - v.y) * (k.a ? e : 1);
+  }
+  const [gx, gz] = seaSlope(v.x, v.z), fx = Math.sin(v.h), fz = Math.cos(v.h), sp = Math.hypot(v.vx, v.vz);
+  const wantPitch = k.a ? clamp(Math.atan2(k.vy || 0, Math.max(8, sp)), -0.5, 0.6) : Math.atan(gx * fx + gz * fz);
+  v.pitch += (wantPitch - v.pitch) * Math.min(1, dt * 6);
+  if (v.air && !k.a) splash(v, 8);
+  v.air = !!k.a; v.speed = sp; v.steer = k.s || 0;
+}
+/** Wake and turning spray behind a ski on the water. */
+function wake(c, dt) {
+  if (c.air || (c.speed || 0) < 6) return;
+  const fx = Math.sin(c.h), fz = Math.cos(c.h), n = Math.random() < dt * 40 ? 1 : 0;
+  if (n) emit(c.x - fx * 2, c.y + 0.2, c.z - fz * 2, -fx * 1.5, 1.5, -fz * 1.5, 1, 1.5, 0.7);
+  if (Math.abs(c.steer || 0) > 0.3 && Math.random() < dt * 30) { const s = Math.sign(c.steer); emit(c.x - fz * s * 0.9, c.y + 0.3, c.z + fx * s * 0.9, -fz * s * 6, 3, fx * s * 6, 2, 2, 0.7); }
+}
+let last = performance.now(), lastHb = 0, lastHud = 0, camH = 0;
+const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
+function frame(now) {
+  requestAnimationFrame(frame);
+  const realNow = performance.now(); // timed on the real clock: after a long freeze the rAF time can be from before the wake
+  if (lastFrameAt && realNow - lastFrameAt > 1000) { wakeHold = realNow + 700; host.wasHost = false; host.last = null; } lastFrameAt = realNow; // woke from a freeze or a background tab: another player may have run the race meanwhile, so let their state arrive, then adopt it like a new host
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now; // the first frame can be stamped before `last`
+  setWaveTime(Date.now() / 1000);
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
+  if (isHost()) hostTick(dt, now); else host.wasHost = false;
+  const r = race();
+  if (r) myTick(dt, r, now);
+  // everyone else's skis
+  const seen = new Set(), live = new Set(livePlayers());
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    if (id === net.sessionId || !live.has(id)) continue;
+    const k = parse(p.k, null); if (!k || !r || k.r !== r.id) continue;
+    seen.add(id); const v = viewOf(id, p.c || "#ccc", p.n || "Player"); follow(v, k, dt, now, false);
+    placeSki(v.g, v.x, v.y, v.z, v.h, v.pitch, -v.steer * 0.35); wake(v, dt);
+  }
+  const hostBots = isHost();
+  for (const b of botList()) {
+    seen.add(b.i); const v = viewOf(b.i, b.c, b.n);
+    if (hostBots) { const hb = host.bots.get(b.i); Object.assign(v, { x: hb.x, y: hb.y, z: hb.z, h: hb.h, pitch: hb.pitch || 0, speed: hb.speed, steer: hb.steer, air: hb.air }); }
+    else follow(v, b, dt, now, false);
+    placeSki(v.g, v.x, v.y, v.z, v.h, v.pitch, -(v.steer || 0) * 0.35); wake(v, dt);
+  }
+  for (const [id, v] of views) if (!seen.has(id)) { scene.remove(v.g); views.delete(id); }
+  if (!me.g) me.g = makeSki(myColor, "");
+  placeSki(me.g, me.x, me.y, me.z, me.h, me.pitch || 0, -(me.steer || 0) * 0.35); wake(me, dt);
+  // buoys bob; the arrow floats over my next gate
+  for (const b of buoys) { b.m.position.y = seaY(b.x, b.z) - 0.4; b.m.rotation.z = Math.sin(now / 700 + b.x) * 0.08; }
+  const ng = GATES[me.gi % GATES.length]; arrow.visible = !ATTRACT && !me.ft; arrow.position.set(ng.x, 7 + Math.sin(now / 250) * 0.6, ng.z); arrow.rotation.y += dt * 2;
+  tickParts(dt);
+  // chase camera
+  camH = angle(camH + angle(me.h - camH) * Math.min(1, dt * 3.5));
+  const back = camera.aspect < 1 ? 11 : 9, up = camera.aspect < 1 ? 6 : 4.6;
+  camPos.set(me.x - Math.sin(camH) * back, Math.max(me.y, 0) * 0.6 + up, me.z - Math.cos(camH) * back);
+  camera.position.lerp(camPos, 1 - Math.pow(0.0002, dt));
+  me.shake = Math.max(0, (me.shake || 0) - dt * 3);
+  if (me.shake) camera.position.add(camLook.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(me.shake * 0.8));
+  camLook.set(me.x + Math.sin(camH) * 8, me.y * 0.7 + 1.5, me.z + Math.cos(camH) * 8);
+  camera.lookAt(camLook);
+  const fov = (camera.aspect < 1 ? 80 : 68) + clamp(Math.hypot(me.vx, me.vz) / CONFIG.vmax, 0, 1.2) * 6;
+  camera.fov += (fov - camera.fov) * Math.min(1, dt * 4); camera.updateProjectionMatrix();
+  renderer.render(scene, camera);
+  if (r && now - lastHud > 100) { lastHud = now; hud(r, now); }
+}
+
+(async function start() {
+  net = await connect();
+  net.onState((st) => { S = st; });
+  net.on("again", () => again());
+  net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { dropped = false; });
+  if (!net.offline && typeof MP !== "undefined") board = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
+  const taken = new Set([...Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c), ...shared("bots", []).map((b) => b.c)]);
+  myColor = COLORS.find((c) => !taken.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
+  net.me.set({ n: myName, c: myColor, hb: Date.now() });
+  if (ATTRACT) Object.assign(CONFIG, { countdown: 1500, resultsFor: 1500, seats: 6 });
+  started = performance.now();
+  if (new URLSearchParams(location.search).has("test")) window.__test = { race, botList, me, racers }; // for test scripts only
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
