@@ -111,8 +111,11 @@ const CONFIG = {
   missPenalty: 2000,      // ms added for each missed gate
   gatesPerLap: 10,
   laneWidth: 34,          // how wide the course is (it's open sea: this is just for the bots)
+  seaRadius: 280,         // how far from the middle of the course a ski can go before the sea pushes it back
+  bigAir: 1000,           // ms in the air that counts as a jump worth a "BIG AIR!"
   countdown: 5000,        // ms on the grid before GO
   afterFirst: 25000,      // ms the race stays open after the first finisher
+  afterHumans: 10000,     // once every player has finished, ms the bots still get to finish
   resultsFor: 12000,      // ms the results show before the next race
   botSkill: [0.86, 0.97], // bots' top speed, as a share of vmax
   botMiss: 0.07,          // chance a bot misses any one gate
@@ -220,6 +223,7 @@ const ISLANDS = [];
   for (const [x, z, r] of [[45, 65, 34], [140, 78, 20], [-50, 70, 18]]) if (clear(x, z, r)) ISLANDS.push({ x, z, r });
   for (let n = 0; n < 400 && ISLANDS.length < 14; n++) { const x = -260 + rnd() * 560, z = -150 + rnd() * 420, r = 6 + rnd() * 16; if (clear(x, z, r)) ISLANDS.push({ x, z, r }); }
 }
+const SEA_MID = { x: P.reduce((a, p) => a + p.x, 0) / N, z: P.reduce((a, p) => a + p.z, 0) / N }; // the middle of the course
 /** Grid slot `n` behind the start line: { x, z, h, i }. */
 function gridSlot(n) {
   const back = (N - 6 - Math.floor(n / 3) * 12 + N) % N, side = ((n % 3) - 1) * 6;
@@ -356,8 +360,8 @@ function makeSki(color, name) {
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 10), skin); head.position.set(0, 1.45, 0.62); rider.add(head);
   const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.34, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), paint); helmet.position.copy(head.position); rider.add(helmet);
   for (const s of [-1, 1]) { const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.12, 0.6, 4, 6), skin); arm.position.set(s * 0.45, 1.0, 0.75); arm.rotation.x = 1.1; rider.add(arm); }
-  if (name) g.add(nameTag(name));
-  g.userData = { body, rider };
+  const tag = name ? nameTag(name) : null; if (tag) g.add(tag);
+  g.userData = { body, rider, tag };
   scene.add(g); return g;
 }
 /** Draw a ski: position, heading, pitch (nose up +), roll (lean into the turn). */
@@ -376,7 +380,7 @@ function stepSki(c, ctl, dt) {
   if (onWater) {
     if (ctl.gas > 0 && vf < top) vf += CONFIG.accel * ctl.gas * dt;
     if (ctl.brake > 0) vf -= CONFIG.brake * ctl.brake * dt;
-    vf = Math.max(vf, -6);
+    vf = Math.max(vf, ctl.gas ? -6 : 0); // braking while racing can reverse off rocks; parked (grid, finished) it only stops
     c.h = angle(c.h + ctl.steer * CONFIG.turn * (ctl.brake ? 1.4 : 1) * dt * clamp(vf / 8, -1, 1));
     vf -= vf * CONFIG.drag * dt;
     vs *= Math.exp(-CONFIG.grip * dt);
@@ -390,6 +394,9 @@ function stepSki(c, ctl, dt) {
     const dx = c.x - isl.x, dz = c.z - isl.z, d = Math.hypot(dx, dz), r = isl.r + 2;
     if (d < r) { const nx = dx / d, nz = dz / d, vr = c.vx * nx + c.vz * nz; c.x = isl.x + nx * r; c.z = isl.z + nz * r; if (vr < 0) { c.vx -= 1.5 * vr * nx; c.vz -= 1.5 * vr * nz; c.bonk = -vr; } }
   }
+  // the edge of the racing area: turned back toward the course (past it the sea ends)
+  { const dx = c.x - SEA_MID.x, dz = c.z - SEA_MID.z, d = Math.hypot(dx, dz);
+    if (d > CONFIG.seaRadius) { const nx = dx / d, nz = dz / d, vr = c.vx * nx + c.vz * nz; c.x = SEA_MID.x + nx * CONFIG.seaRadius; c.z = SEA_MID.z + nz * CONFIG.seaRadius; if (vr > 0) { c.vx -= 1.5 * vr * nx; c.vz -= 1.5 * vr * nz; const fx = Math.sin(c.h), fz = Math.cos(c.h), fn = fx * nx + fz * nz; if (fn > 0) c.h = Math.atan2(fx - 2 * fn * nx, fz - 2 * fn * nz); c.edge = true; } } }
   // up and down: ride the surface, or fly off it when it drops away faster than gravity
   const surf = seaY(c.x, c.z);
   let landed = 0;
@@ -471,15 +478,17 @@ function hostTick(dt, now) {
     const all = racers(), done = all.filter((x) => x.ft);
     const humansDone = all.filter((x) => !x.bot && (!ATTRACT || !x.mine)).every((x) => x.ft);
     if (done.length && !r.endsAt) r = writeRace({ ...r, endsAt: t + CONFIG.afterFirst });
-    if ((done.length && humansDone && humans.length) || (r.endsAt && t > r.endsAt) || t - r.startAt > 300000 || (ATTRACT && done.length >= 3)) {
+    if (done.length && humansDone && humans.length && r.endsAt > t + CONFIG.afterHumans) r = writeRace({ ...r, endsAt: t + CONFIG.afterHumans });
+    if (all.every((x) => x.ft) || (r.endsAt && t > r.endsAt) || t - r.startAt > 300000 || (ATTRACT && done.length >= 3)) {
       r = writeRace({ ...r, phase: "done", endsAt: t + CONFIG.resultsFor, results: all.map((x) => ({ id: x.id, n: x.mine ? myName : x.name, ft: x.ft || 0, pen: x.pen || 0 })) });
     }
   }
   if (r.phase === "done" && t > r.endsAt) r = newRace(r.id + 1);
   for (const b of host.bots.values()) {
     const racing = r.phase === "race" && !b.ft;
-    stepSki(b, racing ? botSteer(b, now) : { steer: 0, gas: 0, brake: 1 }, dt);
-    if (racing) laps(b, r, () => {});
+    const landed = stepSki(b, racing ? botSteer(b, now) : { steer: 0, gas: 0, brake: 1 }, dt);
+    if (landed > 6) splash(b, landed);
+    if (racing && laps(b, r, () => {})) b.plan = botPlan(b.top); // a new lap: new lines, so a bot doesn't miss the same gate every lap
   }
   separateBots();
   if (now - host.lastBots > 100) {
@@ -561,7 +570,9 @@ function myTick(dt, r, now) {
   const ctl = !racing ? { steer: 0, gas: 0, brake: 1 } : ATTRACT ? botSteer(me, now) : { steer, gas: 1, brake: input.brake ? 1 : 0 };
   const wasAir = me.air, landed = stepSki(me, ctl, dt);
   if (landed > 6) { splash(me, landed); me.shake = Math.min(1, landed / 14); beep(140, 0.25, "sawtooth", 0.06); }
-  if (!wasAir && me.air && racing && Math.hypot(me.vx, me.vz) > 20) toast("AIR!", 600);
+  if (!wasAir && me.air) me.airAt = now;
+  if (wasAir && !me.air && racing && now - me.airAt > CONFIG.bigAir) toast("BIG AIR!", 700); // only the long jumps: small hops happen every second
+  if (me.edge) { me.edge = false; toast("Back to the course!", 1200, true); }
   if (me.bonk > 4) { me.shake = 0.6; beep(90, 0.2, "square", 0.08); toast("Ouch, rocks!", 800, true); } me.bonk = 0;
   if (racing) {
     const lapDone = laps(me, r, (ok, gi) => {
@@ -637,6 +648,7 @@ const wakeAudio = () => { if (!actx) { try { actx = new (window.AudioContext || 
 const KEYS = { ArrowLeft: "left", a: "left", A: "left", ArrowRight: "right", d: "right", D: "right", ArrowDown: "brake", s: "brake", S: "brake", " ": "brake" };
 addEventListener("keydown", (e) => { wakeAudio(); const k = KEYS[e.key]; if (k) { e.preventDefault(); input[k] = true; } });
 addEventListener("keyup", (e) => { const k = KEYS[e.key]; if (k) input[k] = false; });
+addEventListener("blur", () => { input.left = input.right = input.brake = false; }); // keys let go when the tab loses focus
 for (const b of document.querySelectorAll(".pad button")) {
   const k = b.dataset.k, on = (v) => { input[k] = v; b.classList.toggle("on", v); };
   b.addEventListener("pointerdown", (e) => { e.preventDefault(); wakeAudio(); b.setPointerCapture(e.pointerId); on(true); });
@@ -707,6 +719,7 @@ function frame(now) {
     placeSki(v.g, v.x, v.y, v.z, v.h, v.pitch, -(v.steer || 0) * 0.35); wake(v, dt);
   }
   for (const [id, v] of views) if (!seen.has(id)) { scene.remove(v.g); views.delete(id); }
+    else if (v.g.userData.tag) v.g.userData.tag.visible = v.g.position.distanceTo(camera.position) > 9; // a name right by the camera would fill the screen
   if (!me.g) me.g = makeSki(myColor, "");
   placeSki(me.g, me.x, me.y, me.z, me.h, me.pitch || 0, -(me.steer || 0) * 0.35); wake(me, dt);
   // buoys bob; the arrow floats over my next gate
